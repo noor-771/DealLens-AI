@@ -65,10 +65,17 @@ class TestImageScan:
         assert isinstance(analysis['deal_score'], int)
         assert 0 <= analysis['deal_score'] <= 100
         assert isinstance(analysis['positive_aspects'], list)
+        assert len(analysis['positive_aspects']) >= 1, 'positive_aspects (pros) must have >=1 item'
         assert isinstance(analysis['warnings'], list)
         assert isinstance(analysis['issues'], list)
-        assert isinstance(analysis['recommendations'], str)
-        assert isinstance(analysis['summary'], str)
+        assert isinstance(analysis['recommendations'], str) and analysis['recommendations']
+        assert isinstance(analysis['summary'], str) and analysis['summary']
+
+        # product_info: name + category required (non-empty). price nullable number.
+        pi = data['product_info']
+        assert isinstance(pi.get('name'), str) and pi['name'], f"product_info.name empty: {pi}"
+        assert isinstance(pi.get('category'), str) and pi['category'], f"product_info.category empty: {pi}"
+        assert pi.get('price') is None or isinstance(pi['price'], (int, float)), f"price must be null or number: {pi.get('price')}"
 
         # Alternatives check
         alts = analysis['alternatives']
@@ -135,6 +142,64 @@ class TestTextScan:
         assert scan_doc.get('source') == 'text'
 
         pytest.text_alts_count = len(alts)
+
+
+# ---------- Error handling / image validation ----------
+class TestImageValidation:
+    """Verify hardened validate_image() returns specific 400 error codes."""
+
+    def test_image_too_small_bytes(self, api_client, base_url, auth_headers):
+        # base64 of "hello" -> way under 1KB
+        import base64 as b64
+        tiny = b64.b64encode(b'hello world').decode()
+        r = api_client.post(f"{base_url}/api/scan", json={'image_base64': tiny}, headers=auth_headers, timeout=30)
+        assert r.status_code == 400, f"expected 400 got {r.status_code}: {r.text[:200]}"
+        detail = r.json().get('detail', '')
+        assert 'IMAGE_TOO_SMALL' in detail, f"expected IMAGE_TOO_SMALL, got: {detail}"
+
+    def test_image_too_small_dimensions(self, api_client, base_url, auth_headers):
+        # 32x32 PNG (below 64px min dim). Pad to >1KB with metadata by using a JPEG.
+        from PIL import Image
+        import io as _io
+        import base64 as b64
+        img = Image.new('RGB', (32, 32), color=(120, 200, 80))
+        # Add some noise so JPEG isn't uniform
+        pix = img.load()
+        for x in range(32):
+            for y in range(32):
+                pix[x, y] = ((x*7) % 255, (y*11) % 255, ((x+y)*13) % 255)
+        buf = _io.BytesIO()
+        img.save(buf, format='JPEG', quality=95)
+        data = buf.getvalue()
+        # Ensure > 1KB to bypass byte check and hit dimension check
+        if len(data) < 1024:
+            data = data + b'\x00' * (1024 - len(data) + 200)
+        b = b64.b64encode(data).decode()
+        r = api_client.post(f"{base_url}/api/scan", json={'image_base64': b}, headers=auth_headers, timeout=30)
+        assert r.status_code == 400, f"expected 400 got {r.status_code}: {r.text[:200]}"
+        detail = r.json().get('detail', '')
+        # Either IMAGE_TOO_SMALL (dims) or CORRUPT_IMAGE if padding broke it. Prefer TOO_SMALL.
+        assert 'IMAGE_TOO_SMALL' in detail or 'CORRUPT_IMAGE' in detail, f"unexpected detail: {detail}"
+
+    def test_invalid_base64(self, api_client, base_url, auth_headers):
+        r = api_client.post(f"{base_url}/api/scan",
+                            json={'image_base64': 'not-real-base64!!!'},
+                            headers=auth_headers, timeout=30)
+        assert r.status_code == 400, f"expected 400 got {r.status_code}: {r.text[:200]}"
+        detail = r.json().get('detail', '')
+        assert 'INVALID_BASE64' in detail or 'INVALID_IMAGE' in detail or 'CORRUPT_IMAGE' in detail, \
+            f"expected INVALID_BASE64/INVALID_IMAGE/CORRUPT_IMAGE, got: {detail}"
+
+    def test_corrupt_image_random_bytes(self, api_client, base_url, auth_headers):
+        import os as _os
+        import base64 as b64
+        # 2KB of random bytes (passes size check, fails PIL open)
+        random_bytes = _os.urandom(2048)
+        b = b64.b64encode(random_bytes).decode()
+        r = api_client.post(f"{base_url}/api/scan", json={'image_base64': b}, headers=auth_headers, timeout=30)
+        assert r.status_code == 400, f"expected 400 got {r.status_code}: {r.text[:200]}"
+        detail = r.json().get('detail', '')
+        assert 'CORRUPT_IMAGE' in detail, f"expected CORRUPT_IMAGE, got: {detail}"
 
 
 # ---------- Analytics ----------

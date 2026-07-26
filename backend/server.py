@@ -128,23 +128,39 @@ async def get_user_from_token(authorization: Optional[str]) -> Dict[str, Any]:
     return user
 
 def validate_image(image_base64: str) -> str:
-    """Validate and ensure image is in correct format"""
+    """Validate and ensure image is in correct format. Raises HTTPException with a clear error code."""
     try:
         # Remove data URL prefix if present
         if 'base64,' in image_base64:
             image_base64 = image_base64.split('base64,')[1]
-        
+
         # Decode and validate
-        image_data = base64.b64decode(image_base64)
-        img = Image.open(io.BytesIO(image_data))
-        
+        try:
+            image_data = base64.b64decode(image_base64)
+        except Exception:
+            raise HTTPException(status_code=400, detail='INVALID_BASE64')
+
+        if len(image_data) < 1024:
+            raise HTTPException(status_code=400, detail='IMAGE_TOO_SMALL')
+
+        try:
+            img = Image.open(io.BytesIO(image_data))
+            img.load()
+        except Exception:
+            raise HTTPException(status_code=400, detail='CORRUPT_IMAGE')
+
+        # Minimum size check (avoid 1x1 or tiny images)
+        if min(img.size) < 64:
+            raise HTTPException(status_code=400, detail='IMAGE_TOO_SMALL')
+
         # Ensure format is supported
         if img.format not in ['JPEG', 'PNG', 'WEBP']:
             # Convert to PNG
             buffer = io.BytesIO()
             img.convert('RGB').save(buffer, format='PNG')
             image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        
+            img = Image.open(io.BytesIO(base64.b64decode(image_base64)))
+
         # Resize if too large (max 2048px on longest side)
         max_size = 2048
         if max(img.size) > max_size:
@@ -154,13 +170,16 @@ def validate_image(image_base64: str) -> str:
             buffer = io.BytesIO()
             img.save(buffer, format=img.format or 'PNG')
             image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        
+
         return image_base64
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f'Invalid image format: {str(e)}')
+        raise HTTPException(status_code=400, detail=f'INVALID_IMAGE:{str(e)[:80]}')
 
 async def analyze_product_with_ai(image_base64: str, language: str = 'en') -> Dict[str, Any]:
     """Analyze product image using GPT-4o Vision"""
+    import json
     try:
         # Validate image
         image_base64 = validate_image(image_base64)
@@ -260,7 +279,7 @@ Make the analysis helpful and natural."""
             api_key=EMERGENT_LLM_KEY,
             session_id=f"scan_{uuid.uuid4().hex[:12]}",
             system_message="You are a helpful shopping assistant expert. Always respond with valid JSON only."
-        ).with_model("openai", "gpt-5.4")
+        ).with_model("openai", "gpt-4o")
         
         # Create image content
         image_content = ImageContent(image_base64=image_base64)
@@ -277,7 +296,6 @@ Make the analysis helpful and natural."""
                 break
         
         # Parse JSON response
-        import json
         # Extract JSON from markdown code blocks if present
         if '```json' in response_text:
             response_text = response_text.split('```json')[1].split('```')[0].strip()
@@ -286,7 +304,9 @@ Make the analysis helpful and natural."""
         
         result = json.loads(response_text)
         return result
-        
+
+    except HTTPException:
+        raise
     except json.JSONDecodeError as e:
         logging.error(f"Failed to parse AI response: {e}")
         # Return fallback response
@@ -315,6 +335,7 @@ Make the analysis helpful and natural."""
 
 async def analyze_text_with_ai(text: str, language: str = 'en') -> Dict[str, Any]:
     """Analyze product from text/URL using GPT-4o"""
+    import json
     try:
         if language == 'ar':
             prompt = f"""أنت خبير تسوق ذكي. قم بتحليل هذا المنتج/الرابط واستخرج المعلومات:
@@ -381,7 +402,7 @@ Make the analysis helpful and natural."""
             api_key=EMERGENT_LLM_KEY,
             session_id=f"text_scan_{uuid.uuid4().hex[:12]}",
             system_message="You are a helpful shopping assistant expert. Always respond with valid JSON only."
-        ).with_model("openai", "gpt-5.4")
+        ).with_model("openai", "gpt-4o")
 
         response_text = ""
         async for event in chat.stream_message(UserMessage(text=prompt)):
@@ -398,6 +419,8 @@ Make the analysis helpful and natural."""
 
         result = json.loads(response_text)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Text analysis error: {e}")
         raise HTTPException(status_code=500, detail=f'AI analysis failed: {str(e)}')

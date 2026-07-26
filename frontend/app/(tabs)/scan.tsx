@@ -22,6 +22,8 @@ import { useAuth } from '@/src/contexts/AuthContext';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Logo from '@/src/components/Logo';
+import PrivacyConsentModal from '@/src/components/PrivacyConsentModal';
+import { storage } from '@/src/utils/storage';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -33,6 +35,21 @@ import Animated, {
 import { trackEvent } from '@/src/utils/analytics';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+const CONSENT_KEY = 'privacy_consent_v1';
+
+// Map backend error codes to user-friendly translated messages
+const mapErrorToMessage = (err: any, t: (k: string) => string): string => {
+  const msg = String(err?.message || err || '');
+  if (msg.includes('IMAGE_TOO_SMALL')) return t('errImageTooSmall');
+  if (msg.includes('CORRUPT_IMAGE')) return t('errCorruptImage');
+  if (msg.includes('INVALID_IMAGE') || msg.includes('INVALID_BASE64')) return t('errInvalidImage');
+  if (msg.includes('Network') || msg.includes('fetch')) return t('errNetwork');
+  if (msg.includes('timeout') || msg.includes('Timeout')) return t('errTimeout');
+  if (msg.includes('AI analysis failed')) return t('errAIFailed');
+  return t('errUnknown');
+};
+
+type ScanAction = 'camera' | 'gallery' | 'url';
 
 export default function ScanScreen() {
   const { t, i18n } = useTranslation();
@@ -43,6 +60,17 @@ export default function ScanScreen() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showUrlModal, setShowUrlModal] = useState(false);
   const [urlInput, setUrlInput] = useState('');
+  const [showConsentModal, setShowConsentModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState<ScanAction | null>(null);
+  const [hasConsent, setHasConsent] = useState<boolean | null>(null);
+
+  // Check stored consent on mount
+  React.useEffect(() => {
+    (async () => {
+      const stored = await storage.getItem(CONSENT_KEY, null);
+      setHasConsent(stored === 'true');
+    })();
+  }, []);
 
   // Pulse animation for main scan button
   const pulseScale = useSharedValue(1);
@@ -62,7 +90,39 @@ export default function ScanScreen() {
     transform: [{ scale: pulseScale.value }],
   }));
 
-  const handleTakePhoto = async () => {
+  // Gatekeeper: check consent before executing action
+  const requireConsent = (action: ScanAction) => {
+    if (hasConsent) {
+      runAction(action);
+    } else {
+      setPendingAction(action);
+      setShowConsentModal(true);
+    }
+  };
+
+  const runAction = (action: ScanAction) => {
+    if (action === 'camera') doTakePhoto();
+    else if (action === 'gallery') doChooseFromGallery();
+    else if (action === 'url') setShowUrlModal(true);
+  };
+
+  const handleConsentAccept = async () => {
+    await storage.setItem(CONSENT_KEY, 'true');
+    setHasConsent(true);
+    setShowConsentModal(false);
+    trackEvent('privacy_consent_accepted', {}, token);
+    const action = pendingAction;
+    setPendingAction(null);
+    if (action) setTimeout(() => runAction(action), 250);
+  };
+
+  const handleConsentDecline = () => {
+    setShowConsentModal(false);
+    setPendingAction(null);
+    trackEvent('privacy_consent_declined', {}, token);
+  };
+
+  const doTakePhoto = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
 
     if (status !== 'granted') {
@@ -85,7 +145,7 @@ export default function ScanScreen() {
     }
   };
 
-  const handleChooseFromGallery = async () => {
+  const doChooseFromGallery = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (status !== 'granted') {
@@ -141,7 +201,7 @@ export default function ScanScreen() {
       router.push(`/result/${result.scan_id}`);
     } catch (error: any) {
       trackEvent('scan_failed', { error: error.message }, token);
-      Alert.alert(t('error'), error.message || 'Failed to analyze product');
+      Alert.alert(t('error'), mapErrorToMessage(error, t));
     } finally {
       setIsAnalyzing(false);
     }
@@ -181,7 +241,7 @@ export default function ScanScreen() {
       router.push(`/result/${result.scan_id}`);
     } catch (error: any) {
       trackEvent('text_scan_failed', { error: error.message }, token);
-      Alert.alert(t('error'), error.message || 'Failed to analyze');
+      Alert.alert(t('error'), mapErrorToMessage(error, t));
     } finally {
       setIsAnalyzing(false);
     }
@@ -247,7 +307,7 @@ export default function ScanScreen() {
           {/* Primary Scan Button */}
           <Animated.View style={[styles.primaryButtonWrapper, pulseAnimStyle]}>
             <TouchableOpacity
-              onPress={handleTakePhoto}
+              onPress={() => requireConsent('camera')}
               activeOpacity={0.9}
               testID="primary-scan-button"
             >
@@ -285,7 +345,7 @@ export default function ScanScreen() {
               iconBg="rgba(10, 132, 255, 0.12)"
               title={t('takePhoto')}
               description={t('takePhotoDesc')}
-              onPress={handleTakePhoto}
+              onPress={() => requireConsent('camera')}
               isRTL={isRTL}
               testID="take-photo-option"
             />
@@ -295,7 +355,7 @@ export default function ScanScreen() {
               iconBg="rgba(48, 209, 88, 0.12)"
               title={t('uploadImage')}
               description={t('uploadImageDesc')}
-              onPress={handleChooseFromGallery}
+              onPress={() => requireConsent('gallery')}
               isRTL={isRTL}
               testID="upload-image-option"
             />
@@ -305,7 +365,7 @@ export default function ScanScreen() {
               iconBg="rgba(191, 90, 242, 0.12)"
               title={t('pasteLink')}
               description={t('pasteLinkDesc')}
-              onPress={() => setShowUrlModal(true)}
+              onPress={() => requireConsent('url')}
               isRTL={isRTL}
               testID="paste-link-option"
             />
@@ -393,6 +453,13 @@ export default function ScanScreen() {
           </KeyboardAvoidingView>
         </TouchableWithoutFeedback>
       </Modal>
+
+      {/* Privacy Consent Modal (first-time, before scanning) */}
+      <PrivacyConsentModal
+        visible={showConsentModal}
+        onAccept={handleConsentAccept}
+        onDecline={handleConsentDecline}
+      />
     </View>
   );
 }

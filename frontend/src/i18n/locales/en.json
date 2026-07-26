@@ -64,5 +64,21 @@
   "avgScore": "Avg Score",
   "bestDeal": "Best Deal",
   "topCategory": "Top Category",
-  "noStatsYet": "Scan your first product to see stats"
+  "noStatsYet": "Scan your first product to see stats",
+  "privacyTitle": "Your Data, Your Control",
+  "privacySubtitle": "Before we scan, here's how DealLens AI handles your data.",
+  "privacyPoint1": "Your images and analyses are stored securely and linked only to your account.",
+  "privacyPoint2": "Images are sent to OpenAI GPT-4o for AI analysis. No image is used to train models.",
+  "privacyPoint3": "Data is stored on our secure servers so you can access your scan history anywhere.",
+  "privacyPoint4": "You can delete any scan or your entire account at any time from Profile.",
+  "privacyPoint5": "We never sell your data or share it with third parties for marketing.",
+  "privacyAccept": "I Agree, Continue",
+  "privacyDecline": "Not Now",
+  "errImageTooSmall": "Image is too small. Please choose a clearer photo.",
+  "errCorruptImage": "The image seems corrupted. Please try another one.",
+  "errInvalidImage": "This image format isn't supported. Use JPEG, PNG, or WEBP.",
+  "errNetwork": "Network error. Please check your connection and try again.",
+  "errAIFailed": "Our AI couldn't analyze this. Please try a different image or product.",
+  "errTimeout": "Analysis is taking too long. Please try again.",
+  "errUnknown": "Something went wrong. Please try again."
 }
