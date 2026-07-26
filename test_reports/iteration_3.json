@@ -1,0 +1,38 @@
+{
+  "summary": "DealLens AI backend re-verified after vision model reverted to gpt-5.4 and loud-fail (502 AI_PARSE_FAILED / AI_UNAVAILABLE) added. ALL 19/19 pytest tests pass (100%). CRITICAL BLOCKER FROM ITERATION_2 IS FIXED: POST /api/scan with a real product JPEG (400x400 smartwatch, /tmp/product.jpg) now returns a REAL analysis, not the fallback stub. Live probe results: image scan → name='Round Smartwatch', category='Smartwatch', deal_score=58, 3 real pros, 3 named alternatives (Galaxy Watch6, Watch SE, Venu Sq 2); text scan for 'Sony WH-1000XM5 wireless headphones' → name='Sony WH-1000XM5 Wireless Headphones', category='Wireless Headphones', deal_score=90, 3 named alternatives (Bose 700, Sennheiser Momentum 4, Apple AirPods Max). Hard assertions added and passing: product_info.name != 'Product detected', category != 'General', positive_aspects >= 1, alternatives >= 1 each with non-empty name+reason. All four image-validation error codes still return HTTP 400 with correct detail (INVALID_BASE64, IMAGE_TOO_SMALL bytes, IMAGE_TOO_SMALL dimensions, CORRUPT_IMAGE). All six auth guards still return 401. Analytics event + stats unaffected. Code paths verified: AI_PARSE_FAILED exists at server.py:315 (vision) and :409 (text); AI_UNAVAILABLE exists at :319 and :415; vision model 'gpt-5.4' at :282; text model 'gpt-4o' at :390.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/language", "issue": "Still accepts `language: str` as a query parameter (rest of API uses JSON bodies). Also accepts arbitrary strings with no whitelist (e.g. 'zz' would be accepted). Cosmetic, not blocking."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_deallens_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional cleanup: (a) extract vision/text model strings to env vars or a constants module to keep them in sync; (b) convert /api/auth/language to a JSON body with a language whitelist; (c) server.py is 689 lines — split into ai.py / scans.py / auth.py / analytics.py before it grows further."
+  ],
+  "critical_code_review_comments": [
+    "server.py = 689 lines, approaching the 700-line split threshold.",
+    "Vision uses gpt-5.4, text uses gpt-4o — two different models hardcoded on lines 282 and 390. Consider a single source of truth.",
+    "auth/language still accepts arbitrary language strings with no whitelist.",
+    "validate_image round-trips through base64→PIL→base64 twice on unknown formats (lines 157-172); could be flattened."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_deallens_backend.py (added hard-assert that product_info.name != 'Product detected' and category != 'General' for both image and text scans; switched text scan payload to 'Sony WH-1000XM5 wireless headphones' per new spec)"
+  ],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "One session-scoped TEST_ user + Mongo session via conftest.py `test_context` fixture. Verified 0 residual TEST_ users / user_test_* sessions / scans / analytics_events after the run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "pytest.ini still forces `-n 2 --dist loadscope` which breaks session-scoped fixtures across test classes. Run tests with `-n 0 -o addopts=''` (as documented in pytest.ini header). Real product JPEG at /tmp/product.jpg (11.8 KB, smartwatch, 400x400). Vision pipeline confirmed working end-to-end on gpt-5.4 with the strengthened 'never refuse' system message.",
+  "rca_of_issue": "Iteration_2 blocker root cause was gpt-4o refusing vision requests without visible text → JSONDecodeError → silent stub fallback returning HTTP 200 with meaningless product. Main agent's fix: (a) reverted vision model to gpt-5.4 at server.py:282, (b) replaced the silent stub fallback with HTTPException(502, 'AI_PARSE_FAILED') at :313-316 and HTTPException(502, 'AI_UNAVAILABLE') at :319, (c) added identical loud-fail path to analyze_text_with_ai at :409 and :415, (d) strengthened vision system message with 'Never refuse — analyze what you can see and infer reasonable details from visual cues'. Live probe with a smartwatch JPEG now returns 'Round Smartwatch'/'Smartwatch' with 3 real named alternatives. Blocker is resolved."
+}

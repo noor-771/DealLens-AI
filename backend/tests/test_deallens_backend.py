@@ -75,6 +75,9 @@ class TestImageScan:
         pi = data['product_info']
         assert isinstance(pi.get('name'), str) and pi['name'], f"product_info.name empty: {pi}"
         assert isinstance(pi.get('category'), str) and pi['category'], f"product_info.category empty: {pi}"
+        # HARD ASSERT: must not be the fallback stub sentinels
+        assert pi['name'].strip().lower() != 'product detected', f"AI returned stub name 'Product detected': {pi}"
+        assert pi['category'].strip().lower() != 'general', f"AI returned stub category 'General': {pi}"
         assert pi.get('price') is None or isinstance(pi['price'], (int, float)), f"price must be null or number: {pi.get('price')}"
 
         # Alternatives check
@@ -119,11 +122,18 @@ class TestImageScan:
 class TestTextScan:
     def test_scan_text(self, api_client, base_url, auth_headers, mongo_db):
         r = api_client.post(f"{base_url}/api/scan-text",
-                            json={'text': 'Apple iPhone 15 Pro 256GB Titanium'},
+                            json={'text': 'Sony WH-1000XM5 wireless headphones'},
                             headers=auth_headers,
                             timeout=120)
         assert r.status_code == 200, f"scan-text failed: {r.status_code} {r.text[:500]}"
         data = r.json()
+
+        # product_info sanity: must not be stub sentinels
+        pi = data['product_info']
+        assert isinstance(pi.get('name'), str) and pi['name'], f"product_info.name empty: {pi}"
+        assert isinstance(pi.get('category'), str) and pi['category'], f"product_info.category empty: {pi}"
+        assert pi['name'].strip().lower() != 'product detected'
+        assert pi['category'].strip().lower() != 'general'
 
         analysis = data['analysis']
         for k in ('deal_score', 'positive_aspects', 'warnings', 'issues', 'recommendations', 'summary', 'alternatives'):

@@ -278,8 +278,8 @@ Make the analysis helpful and natural."""
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"scan_{uuid.uuid4().hex[:12]}",
-            system_message="You are a helpful shopping assistant expert. Always respond with valid JSON only."
-        ).with_model("openai", "gpt-4o")
+            system_message="You are a helpful shopping assistant expert. Always respond with valid JSON only. Never refuse — analyze what you can see and infer reasonable details from visual cues (color, shape, packaging, brand marks)."
+        ).with_model("openai", "gpt-5.4")
         
         # Create image content
         image_content = ImageContent(image_base64=image_base64)
@@ -308,30 +308,15 @@ Make the analysis helpful and natural."""
     except HTTPException:
         raise
     except json.JSONDecodeError as e:
-        logging.error(f"Failed to parse AI response: {e}")
-        # Return fallback response
-        return {
-            "product_info": {
-                "name": "Product detected" if language == 'en' else "تم اكتشاف منتج",
-                "brand": None,
-                "price": None,
-                "currency": None,
-                "specifications": [],
-                "category": "General" if language == 'en' else "عام"
-            },
-            "analysis": {
-                "deal_score": 50,
-                "positive_aspects": ["Product image uploaded successfully" if language == 'en' else "تم تحميل صورة المنتج بنجاح"],
-                "warnings": ["Could not fully analyze the image" if language == 'en' else "لم يتم تحليل الصورة بالكامل"],
-                "issues": [],
-                "recommendations": "Please try with a clearer image" if language == 'en' else "يرجى المحاولة بصورة أوضح",
-                "summary": "Basic product scan completed" if language == 'en' else "تم إجراء فحص أساسي للمنتج",
-                "alternatives": []
-            }
-        }
+        logging.error(f"Failed to parse AI response: {e}. Raw response: {response_text[:200]}")
+        # Fail loudly — do NOT return misleading stub
+        raise HTTPException(
+            status_code=502,
+            detail='AI_PARSE_FAILED'
+        )
     except Exception as e:
         logging.error(f"AI analysis error: {e}")
-        raise HTTPException(status_code=500, detail=f'AI analysis failed: {str(e)}')
+        raise HTTPException(status_code=502, detail=f'AI_UNAVAILABLE')
 
 async def analyze_text_with_ai(text: str, language: str = 'en') -> Dict[str, Any]:
     """Analyze product from text/URL using GPT-4o"""
@@ -417,13 +402,17 @@ Make the analysis helpful and natural."""
         elif '```' in response_text:
             response_text = response_text.split('```')[1].split('```')[0].strip()
 
-        result = json.loads(response_text)
+        try:
+            result = json.loads(response_text)
+        except json.JSONDecodeError as je:
+            logging.error(f"Text AI JSON parse failed: {je}. Raw: {response_text[:200]}")
+            raise HTTPException(status_code=502, detail='AI_PARSE_FAILED')
         return result
     except HTTPException:
         raise
     except Exception as e:
         logging.error(f"Text analysis error: {e}")
-        raise HTTPException(status_code=500, detail=f'AI analysis failed: {str(e)}')
+        raise HTTPException(status_code=502, detail='AI_UNAVAILABLE')
 
 # Routes
 @api_router.post("/auth/session", response_model=UserResponse)

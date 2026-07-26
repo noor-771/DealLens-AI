@@ -43,6 +43,7 @@ const mapErrorToMessage = (err: any, t: (k: string) => string): string => {
   if (msg.includes('IMAGE_TOO_SMALL')) return t('errImageTooSmall');
   if (msg.includes('CORRUPT_IMAGE')) return t('errCorruptImage');
   if (msg.includes('INVALID_IMAGE') || msg.includes('INVALID_BASE64')) return t('errInvalidImage');
+  if (msg.includes('AI_PARSE_FAILED') || msg.includes('AI_UNAVAILABLE')) return t('errAIFailed');
   if (msg.includes('Network') || msg.includes('fetch')) return t('errNetwork');
   if (msg.includes('timeout') || msg.includes('Timeout')) return t('errTimeout');
   if (msg.includes('AI analysis failed')) return t('errAIFailed');
