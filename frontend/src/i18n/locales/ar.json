@@ -28,6 +28,7 @@
   "issues": "علامات تحذير",
   "recommendations": "توصية الذكاء الاصطناعي",
   "summary": "الملخص",
+  "alternatives": "بدائل أفضل",
   "noHistory": "لا توجد عمليات مسح بعد",
   "startScanning": "ابدأ بمسح المنتجات لرؤية سجلك",
   "settings": "الإعدادات",
@@ -57,5 +58,11 @@
   "instantAnalysis": "تحليل فوري",
   "smartInsights": "رؤى ذكية",
   "priceComparison": "مقارنة الأسعار",
-  "scamProtection": "حماية من الاحتيال"
+  "scamProtection": "حماية من الاحتيال",
+  "yourStats": "إحصائياتك",
+  "totalScans": "إجمالي المسح",
+  "avgScore": "متوسط التقييم",
+  "bestDeal": "أفضل صفقة",
+  "topCategory": "الفئة الأكثر",
+  "noStatsYet": "امسح منتجك الأول لعرض الإحصائيات"
 }

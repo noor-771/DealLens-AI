@@ -4,6 +4,7 @@ import * as Linking from 'expo-linking';
 import { Platform } from 'react-native';
 import { storage } from '@/src/utils/storage';
 import { useTranslation } from 'react-i18next';
+import { trackEvent } from '@/src/utils/analytics';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
@@ -184,7 +185,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         setToken(sessionToken);
         setUser(userData);
-        
+
+        // Track successful login
+        trackEvent('login_success', { user_id: userData.user_id }, sessionToken);
+
         // Set language from user preference
         if (userData.language) {
           i18n.changeLanguage(userData.language);

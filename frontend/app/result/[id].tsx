@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { theme } from '@/src/theme';
+import { trackEvent } from '@/src/utils/analytics';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
@@ -27,6 +28,14 @@ interface ProductInfo {
   category?: string;
 }
 
+interface Alternative {
+  name: string;
+  brand?: string;
+  estimated_price?: number;
+  currency?: string;
+  reason: string;
+}
+
 interface Analysis {
   deal_score: number;
   positive_aspects: string[];
@@ -34,6 +43,7 @@ interface Analysis {
   issues: string[];
   recommendations: string;
   summary: string;
+  alternatives?: Alternative[];
 }
 
 interface ScanResult {
@@ -69,6 +79,7 @@ export default function ResultScreen() {
       if (response.ok) {
         const data = await response.json();
         setResult(data);
+        trackEvent('result_viewed', { scan_id: data.scan_id }, token);
       }
     } catch (error) {
       console.error('Failed to load scan result:', error);
@@ -231,6 +242,21 @@ export default function ResultScreen() {
           </View>
         </View>
 
+        {/* Alternatives */}
+        {result.analysis.alternatives && result.analysis.alternatives.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.altHeader}>
+              <Ionicons name="swap-horizontal" size={20} color={theme.colors.primary} />
+              <Text style={styles.sectionTitle}>{t('alternatives')}</Text>
+            </View>
+            <View style={styles.altList}>
+              {result.analysis.alternatives.map((alt, index) => (
+                <AlternativeCard key={index} alt={alt} />
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* Action Button */}
         <TouchableOpacity
           style={styles.actionButton}
@@ -256,6 +282,26 @@ const AspectItem = ({ text, icon, color }: { text: string; icon: any; color: str
   <View style={styles.aspectItem}>
     <Ionicons name={icon} size={20} color={color} />
     <Text style={styles.aspectText}>{text}</Text>
+  </View>
+);
+
+const AlternativeCard = ({ alt }: { alt: Alternative }) => (
+  <View style={styles.altCard} testID={`alt-card-${alt.name}`}>
+    <View style={styles.altIconWrap}>
+      <Ionicons name="pricetag" size={18} color={theme.colors.primary} />
+    </View>
+    <View style={styles.altBody}>
+      <View style={styles.altTopRow}>
+        <Text style={styles.altName} numberOfLines={1}>{alt.name}</Text>
+        {alt.estimated_price != null && (
+          <Text style={styles.altPrice}>
+            {alt.currency || ''} {alt.estimated_price}
+          </Text>
+        )}
+      </View>
+      {alt.brand && <Text style={styles.altBrand}>{alt.brand}</Text>}
+      <Text style={styles.altReason}>{alt.reason}</Text>
+    </View>
   </View>
 );
 
@@ -428,5 +474,62 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.white,
+  },
+  altHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: theme.spacing.md,
+  },
+  altList: {
+    gap: 10,
+  },
+  altCard: {
+    flexDirection: 'row',
+    gap: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.lg,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  altIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(10, 132, 255, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  altBody: {
+    flex: 1,
+  },
+  altTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  altName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: theme.colors.text,
+    flex: 1,
+  },
+  altPrice: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: theme.colors.primary,
+  },
+  altBrand: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  altReason: {
+    fontSize: 13,
+    color: '#C7C7CC',
+    marginTop: 6,
+    lineHeight: 18,
   },
 });

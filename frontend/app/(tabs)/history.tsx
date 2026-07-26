@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { theme } from '@/src/theme';
 import { Ionicons } from '@expo/vector-icons';
+import { trackEvent } from '@/src/utils/analytics';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
@@ -41,6 +42,7 @@ export default function HistoryScreen() {
 
   useEffect(() => {
     loadHistory();
+    if (token) trackEvent('history_viewed', {}, token);
   }, []);
 
   const loadHistory = async () => {

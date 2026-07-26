@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -10,22 +10,47 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { theme } from '@/src/theme';
 import { changeLanguage } from '@/src/i18n';
+import { trackEvent } from '@/src/utils/analytics';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+
+interface UserStats {
+  total_scans: number;
+  avg_deal_score: number;
+  best_deal_score: number;
+  top_category: string | null;
+}
 
 export default function ProfileScreen() {
   const { t, i18n } = useTranslation();
   const { user, logout, token } = useAuth();
   const currentLanguage = i18n.language;
+  const [stats, setStats] = useState<UserStats | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    trackEvent('profile_viewed', {}, token);
+    loadStats();
+  }, [token]);
+
+  const loadStats = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/analytics/stats`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setStats(await res.json());
+    } catch {}
+  };
 
   const handleLanguageChange = async (lang: string) => {
     try {
       await changeLanguage(lang);
-      
+
       // Update language preference in backend
       if (token) {
         await fetch(`${BACKEND_URL}/api/auth/language?language=${lang}`, {
@@ -34,6 +59,7 @@ export default function ProfileScreen() {
             'Authorization': `Bearer ${token}`,
           },
         });
+        trackEvent('language_changed', { language: lang }, token);
       }
     } catch (error) {
       console.error('Failed to change language:', error);
@@ -46,10 +72,13 @@ export default function ProfileScreen() {
       'Are you sure you want to logout?',
       [
         { text: t('cancel'), style: 'cancel' },
-        { 
-          text: t('logout'), 
+        {
+          text: t('logout'),
           style: 'destructive',
-          onPress: logout 
+          onPress: async () => {
+            await trackEvent('logout', {}, token);
+            logout();
+          },
         },
       ]
     );
@@ -70,6 +99,49 @@ export default function ProfileScreen() {
           />
           <Text style={styles.userName}>{user?.name}</Text>
           <Text style={styles.userEmail}>{user?.email}</Text>
+        </View>
+
+        {/* Stats */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t('yourStats')}</Text>
+          {stats && stats.total_scans > 0 ? (
+            <View style={styles.statsGrid}>
+              <StatCard
+                icon="scan"
+                label={t('totalScans')}
+                value={String(stats.total_scans)}
+                gradient={['#0A84FF', '#5E5CE6']}
+                testID="stat-total-scans"
+              />
+              <StatCard
+                icon="analytics"
+                label={t('avgScore')}
+                value={`${stats.avg_deal_score}`}
+                gradient={['#5E5CE6', '#BF5AF2']}
+                testID="stat-avg-score"
+              />
+              <StatCard
+                icon="trophy"
+                label={t('bestDeal')}
+                value={`${stats.best_deal_score}`}
+                gradient={['#30D158', '#34C759']}
+                testID="stat-best-deal"
+              />
+              <StatCard
+                icon="pricetags"
+                label={t('topCategory')}
+                value={stats.top_category || '—'}
+                gradient={['#FF9F0A', '#FFCC00']}
+                testID="stat-top-category"
+                textSize={16}
+              />
+            </View>
+          ) : (
+            <View style={styles.emptyStats}>
+              <Ionicons name="stats-chart-outline" size={32} color={theme.colors.textSecondary} />
+              <Text style={styles.emptyStatsText}>{t('noStatsYet')}</Text>
+            </View>
+          )}
         </View>
 
         {/* Settings */}
@@ -136,6 +208,37 @@ export default function ProfileScreen() {
     </SafeAreaView>
   );
 }
+
+const StatCard = ({
+  icon,
+  label,
+  value,
+  gradient,
+  testID,
+  textSize = 22,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+  gradient: [string, string];
+  testID?: string;
+  textSize?: number;
+}) => (
+  <View style={styles.statCard} testID={testID}>
+    <LinearGradient
+      colors={gradient}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.statIconWrap}
+    >
+      <Ionicons name={icon} size={18} color="#FFFFFF" />
+    </LinearGradient>
+    <Text style={[styles.statValue, { fontSize: textSize }]} numberOfLines={1}>
+      {value}
+    </Text>
+    <Text style={styles.statLabel}>{label}</Text>
+  </View>
+);
 
 const styles = StyleSheet.create({
   container: {
@@ -253,5 +356,51 @@ const styles = StyleSheet.create({
   appInfoText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.textSecondary,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  statCard: {
+    flexBasis: '48%',
+    flexGrow: 1,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  statIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  statValue: {
+    fontWeight: '800',
+    color: theme.colors.text,
+    letterSpacing: -0.5,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  emptyStats: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  emptyStatsText: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
   },
 });

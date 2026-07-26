@@ -37,6 +37,8 @@ async def create_indexes():
     await db.scans.create_index('user_id')
     await db.scans.create_index('scan_id', unique=True)
     await db.scans.create_index([('user_id', 1), ('created_at', -1)])
+    await db.analytics_events.create_index([('user_id', 1), ('created_at', -1)])
+    await db.analytics_events.create_index('event_type')
 
 # Create the main app
 app = FastAPI()
@@ -70,6 +72,13 @@ class ProductInfo(BaseModel):
     specifications: Optional[List[str]] = None
     category: Optional[str] = None
 
+class Alternative(BaseModel):
+    name: str
+    brand: Optional[str] = None
+    estimated_price: Optional[float] = None
+    currency: Optional[str] = None
+    reason: str
+
 class Analysis(BaseModel):
     deal_score: int
     positive_aspects: List[str]
@@ -77,6 +86,7 @@ class Analysis(BaseModel):
     issues: List[str]
     recommendations: str
     summary: str
+    alternatives: Optional[List[Alternative]] = []
 
 class ScanResponse(BaseModel):
     scan_id: str
@@ -190,10 +200,15 @@ async def analyze_product_with_ai(image_base64: str, language: str = 'en') -> Di
     "warnings": ["تحذير 1"],
     "issues": ["مشكلة 1"],
     "recommendations": "توصياتك هنا",
-    "summary": "ملخص التحليل"
+    "summary": "ملخص التحليل",
+    "alternatives": [
+      {"name": "اسم البديل", "brand": "العلامة التجارية", "estimated_price": السعر_التقديري, "currency": "USD", "reason": "سبب اختيار هذا البديل"},
+      {"name": "بديل آخر", "brand": "علامة", "estimated_price": السعر, "currency": "USD", "reason": "لماذا هو أفضل"}
+    ]
   }
 }
 
+اذكر 2-3 بدائل حقيقية ومعروفة في السوق مع أسعار تقديرية معقولة.
 اجعل التحليل مفيداً وطبيعياً بالعربية."""
         else:
             prompt = """You are a smart shopping expert. Analyze this image and extract the following information:
@@ -229,10 +244,15 @@ Provide the response in the following JSON format:
     "warnings": ["warning 1"],
     "issues": ["issue 1"],
     "recommendations": "Your recommendations here",
-    "summary": "Analysis summary"
+    "summary": "Analysis summary",
+    "alternatives": [
+      {"name": "Alternative name", "brand": "Brand", "estimated_price": price_number, "currency": "USD", "reason": "Why this alternative"},
+      {"name": "Another alternative", "brand": "Brand", "estimated_price": price_number, "currency": "USD", "reason": "Why it's better"}
+    ]
   }
 }
 
+Provide 2-3 real, well-known market alternatives with reasonable estimated prices.
 Make the analysis helpful and natural."""
         
         # Create chat instance
@@ -285,7 +305,8 @@ Make the analysis helpful and natural."""
                 "warnings": ["Could not fully analyze the image" if language == 'en' else "لم يتم تحليل الصورة بالكامل"],
                 "issues": [],
                 "recommendations": "Please try with a clearer image" if language == 'en' else "يرجى المحاولة بصورة أوضح",
-                "summary": "Basic product scan completed" if language == 'en' else "تم إجراء فحص أساسي للمنتج"
+                "summary": "Basic product scan completed" if language == 'en' else "تم إجراء فحص أساسي للمنتج",
+                "alternatives": []
             }
         }
     except Exception as e:
@@ -316,10 +337,14 @@ async def analyze_text_with_ai(text: str, language: str = 'en') -> Dict[str, Any
     "warnings": ["تحذير 1"],
     "issues": ["مشكلة 1"],
     "recommendations": "توصياتك هنا",
-    "summary": "ملخص التحليل"
+    "summary": "ملخص التحليل",
+    "alternatives": [
+      {{"name": "اسم البديل", "brand": "العلامة", "estimated_price": السعر, "currency": "USD", "reason": "سبب البديل"}}
+    ]
   }}
 }}
 
+اذكر 2-3 بدائل حقيقية معروفة في السوق مع أسعار تقديرية.
 اجعل التحليل مفيداً وطبيعياً بالعربية."""
         else:
             prompt = f"""You are a smart shopping expert. Analyze this product/URL and extract information:
@@ -342,10 +367,14 @@ Provide the response in the following JSON format only without any additional ex
     "warnings": ["warning 1"],
     "issues": ["issue 1"],
     "recommendations": "Your recommendations here",
-    "summary": "Analysis summary"
+    "summary": "Analysis summary",
+    "alternatives": [
+      {{"name": "Alternative name", "brand": "Brand", "estimated_price": price_number, "currency": "USD", "reason": "Why this alternative"}}
+    ]
   }}
 }}
 
+Provide 2-3 real, well-known market alternatives with reasonable estimated prices.
 Make the analysis helpful and natural."""
 
         chat = LlmChat(
@@ -557,6 +586,63 @@ async def get_scan(scan_id: str, authorization: Optional[str] = Header(None)):
         image_base64=scan['image_base64'],
         created_at=scan['created_at']
     )
+
+# Analytics
+class AnalyticsEvent(BaseModel):
+    event_type: str  # e.g. scan_started, scan_completed, login, language_changed
+    metadata: Optional[Dict[str, Any]] = {}
+
+@api_router.post("/analytics/event")
+async def track_event(event: AnalyticsEvent, authorization: Optional[str] = Header(None)):
+    """Track a user analytics event"""
+    user = await get_user_from_token(authorization)
+    doc = {
+        "event_id": f"evt_{uuid.uuid4().hex[:12]}",
+        "user_id": user['user_id'],
+        "event_type": event.event_type,
+        "metadata": event.metadata or {},
+        "created_at": datetime.now(timezone.utc),
+    }
+    await db.analytics_events.insert_one(doc)
+    return {"status": "ok"}
+
+@api_router.get("/analytics/stats")
+async def get_user_stats(authorization: Optional[str] = Header(None)):
+    """Return stats for the authenticated user"""
+    user = await get_user_from_token(authorization)
+    user_id = user['user_id']
+
+    total_scans = await db.scans.count_documents({"user_id": user_id})
+
+    # Aggregate for avg score, best score, top category
+    pipeline = [
+        {"$match": {"user_id": user_id}},
+        {"$group": {
+            "_id": None,
+            "avg_score": {"$avg": "$analysis.deal_score"},
+            "best_score": {"$max": "$analysis.deal_score"},
+        }}
+    ]
+    agg = await db.scans.aggregate(pipeline).to_list(1)
+    avg_score = int(agg[0]["avg_score"]) if agg and agg[0].get("avg_score") is not None else 0
+    best_score = int(agg[0]["best_score"]) if agg and agg[0].get("best_score") is not None else 0
+
+    # Top category
+    cat_pipeline = [
+        {"$match": {"user_id": user_id, "product_info.category": {"$ne": None}}},
+        {"$group": {"_id": "$product_info.category", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 1},
+    ]
+    cat_agg = await db.scans.aggregate(cat_pipeline).to_list(1)
+    top_category = cat_agg[0]["_id"] if cat_agg else None
+
+    return {
+        "total_scans": total_scans,
+        "avg_deal_score": avg_score,
+        "best_deal_score": best_score,
+        "top_category": top_category,
+    }
 
 @api_router.get("/")
 async def root():

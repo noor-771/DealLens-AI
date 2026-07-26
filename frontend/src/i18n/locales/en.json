@@ -28,6 +28,7 @@
   "issues": "Red Flags",
   "recommendations": "AI Recommendation",
   "summary": "Summary",
+  "alternatives": "Better Alternatives",
   "noHistory": "No scans yet",
   "startScanning": "Start scanning products to see your history",
   "settings": "Settings",
@@ -57,5 +58,11 @@
   "instantAnalysis": "Instant Analysis",
   "smartInsights": "Smart Insights",
   "priceComparison": "Price Comparison",
-  "scamProtection": "Scam Protection"
+  "scamProtection": "Scam Protection",
+  "yourStats": "Your Stats",
+  "totalScans": "Total Scans",
+  "avgScore": "Avg Score",
+  "bestDeal": "Best Deal",
+  "topCategory": "Top Category",
+  "noStatsYet": "Scan your first product to see stats"
 }

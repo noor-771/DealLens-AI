@@ -30,6 +30,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
+import { trackEvent } from '@/src/utils/analytics';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
@@ -113,6 +114,7 @@ export default function ScanScreen() {
 
     try {
       setIsAnalyzing(true);
+      trackEvent('scan_started', { source: 'image' }, token);
 
       const response = await fetch(`${BACKEND_URL}/api/scan`, {
         method: 'POST',
@@ -131,8 +133,14 @@ export default function ScanScreen() {
       }
 
       const result = await response.json();
+      trackEvent('scan_completed', {
+        scan_id: result.scan_id,
+        deal_score: result.analysis?.deal_score,
+        category: result.product_info?.category,
+      }, token);
       router.push(`/result/${result.scan_id}`);
     } catch (error: any) {
+      trackEvent('scan_failed', { error: error.message }, token);
       Alert.alert(t('error'), error.message || 'Failed to analyze product');
     } finally {
       setIsAnalyzing(false);
@@ -146,6 +154,7 @@ export default function ScanScreen() {
     try {
       setShowUrlModal(false);
       setIsAnalyzing(true);
+      trackEvent('text_scan_started', {}, token);
 
       const response = await fetch(`${BACKEND_URL}/api/scan-text`, {
         method: 'POST',
@@ -164,9 +173,14 @@ export default function ScanScreen() {
       }
 
       const result = await response.json();
+      trackEvent('text_scan_completed', {
+        scan_id: result.scan_id,
+        deal_score: result.analysis?.deal_score,
+      }, token);
       setUrlInput('');
       router.push(`/result/${result.scan_id}`);
     } catch (error: any) {
+      trackEvent('text_scan_failed', { error: error.message }, token);
       Alert.alert(t('error'), error.message || 'Failed to analyze');
     } finally {
       setIsAnalyzing(false);
