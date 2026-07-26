@@ -292,6 +292,87 @@ Make the analysis helpful and natural."""
         logging.error(f"AI analysis error: {e}")
         raise HTTPException(status_code=500, detail=f'AI analysis failed: {str(e)}')
 
+async def analyze_text_with_ai(text: str, language: str = 'en') -> Dict[str, Any]:
+    """Analyze product from text/URL using GPT-4o"""
+    try:
+        if language == 'ar':
+            prompt = f"""أنت خبير تسوق ذكي. قم بتحليل هذا المنتج/الرابط واستخرج المعلومات:
+
+النص/الرابط: {text}
+
+قدم الإجابة بصيغة JSON التالية بدون أي شرح إضافي:
+{{
+  "product_info": {{
+    "name": "اسم المنتج",
+    "brand": "العلامة التجارية أو null",
+    "price": السعر_كرقم_أو_null,
+    "currency": "العملة أو null",
+    "specifications": ["مواصفة 1", "مواصفة 2"],
+    "category": "الفئة"
+  }},
+  "analysis": {{
+    "deal_score": نقاط_من_0_الى_100,
+    "positive_aspects": ["ميزة 1", "ميزة 2"],
+    "warnings": ["تحذير 1"],
+    "issues": ["مشكلة 1"],
+    "recommendations": "توصياتك هنا",
+    "summary": "ملخص التحليل"
+  }}
+}}
+
+اجعل التحليل مفيداً وطبيعياً بالعربية."""
+        else:
+            prompt = f"""You are a smart shopping expert. Analyze this product/URL and extract information:
+
+Text/URL: {text}
+
+Provide the response in the following JSON format only without any additional explanation:
+{{
+  "product_info": {{
+    "name": "Product name",
+    "brand": "Brand or null",
+    "price": price_as_number_or_null,
+    "currency": "Currency or null",
+    "specifications": ["spec 1", "spec 2"],
+    "category": "Category"
+  }},
+  "analysis": {{
+    "deal_score": score_0_to_100,
+    "positive_aspects": ["positive 1", "positive 2"],
+    "warnings": ["warning 1"],
+    "issues": ["issue 1"],
+    "recommendations": "Your recommendations here",
+    "summary": "Analysis summary"
+  }}
+}}
+
+Make the analysis helpful and natural."""
+
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"text_scan_{uuid.uuid4().hex[:12]}",
+            system_message="You are a helpful shopping assistant expert. Always respond with valid JSON only."
+        ).with_model("openai", "gpt-5.4")
+
+        response_text = ""
+        async for event in chat.stream_message(UserMessage(text=prompt)):
+            if isinstance(event, TextDelta):
+                response_text += event.content
+            elif isinstance(event, StreamDone):
+                break
+
+        import json
+        if '```json' in response_text:
+            response_text = response_text.split('```json')[1].split('```')[0].strip()
+        elif '```' in response_text:
+            response_text = response_text.split('```')[1].split('```')[0].strip()
+
+        result = json.loads(response_text)
+        return result
+    except Exception as e:
+        logging.error(f"Text analysis error: {e}")
+        raise HTTPException(status_code=500, detail=f'AI analysis failed: {str(e)}')
+
 # Routes
 @api_router.post("/auth/session", response_model=UserResponse)
 async def create_session(request: CreateSessionRequest):
@@ -369,20 +450,26 @@ async def update_language(language: str, authorization: Optional[str] = Header(N
     )
     return {'message': 'Language updated successfully'}
 
+class ScanRequest(BaseModel):
+    image_base64: str
+
+class TextScanRequest(BaseModel):
+    text: str  # URL or product name/description
+
 @api_router.post("/scan", response_model=ScanResponse)
-async def create_scan(image_base64: str, authorization: Optional[str] = Header(None)):
+async def create_scan(request: ScanRequest, authorization: Optional[str] = Header(None)):
     """Upload and analyze product image"""
     user = await get_user_from_token(authorization)
     
     # Analyze image with AI
-    result = await analyze_product_with_ai(image_base64, user.get('language', 'en'))
+    result = await analyze_product_with_ai(request.image_base64, user.get('language', 'en'))
     
     # Create scan document
     scan_id = f"scan_{uuid.uuid4().hex[:12]}"
     scan_doc = {
         'scan_id': scan_id,
         'user_id': user['user_id'],
-        'image_base64': image_base64,
+        'image_base64': request.image_base64,
         'product_info': result['product_info'],
         'analysis': result['analysis'],
         'created_at': datetime.now(timezone.utc)
@@ -393,7 +480,38 @@ async def create_scan(image_base64: str, authorization: Optional[str] = Header(N
         scan_id=scan_id,
         product_info=ProductInfo(**result['product_info']),
         analysis=Analysis(**result['analysis']),
-        image_base64=image_base64,
+        image_base64=request.image_base64,
+        created_at=scan_doc['created_at']
+    )
+
+@api_router.post("/scan-text", response_model=ScanResponse)
+async def create_text_scan(request: TextScanRequest, authorization: Optional[str] = Header(None)):
+    """Analyze product from text or URL"""
+    user = await get_user_from_token(authorization)
+
+    result = await analyze_text_with_ai(request.text, user.get('language', 'en'))
+
+    # Use a placeholder image (1x1 transparent PNG) for text scans
+    placeholder_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+    scan_id = f"scan_{uuid.uuid4().hex[:12]}"
+    scan_doc = {
+        'scan_id': scan_id,
+        'user_id': user['user_id'],
+        'image_base64': placeholder_image,
+        'product_info': result['product_info'],
+        'analysis': result['analysis'],
+        'source': 'text',
+        'source_text': request.text[:500],  # Store first 500 chars
+        'created_at': datetime.now(timezone.utc)
+    }
+    await db.scans.insert_one(scan_doc)
+
+    return ScanResponse(
+        scan_id=scan_id,
+        product_info=ProductInfo(**result['product_info']),
+        analysis=Analysis(**result['analysis']),
+        image_base64=placeholder_image,
         created_at=scan_doc['created_at']
     )
 

@@ -39,6 +39,11 @@ Global users with full Arabic (RTL) and English support
   - ❌ Issues/risks
 - Recommendations and insights
 
+### 3b. Multi-input Analysis
+- Take Photo (camera)
+- Upload Image (gallery)
+- Paste Product Link (URL/text analysis via GPT-4o)
+
 ### 4. Bilingual Support
 - Arabic RTL interface
 - English interface
