@@ -27,6 +27,23 @@ db = client[os.environ.get('DB_NAME', 'test_database')]
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 
+# Security constants
+MAX_IMAGE_BASE64_BYTES = 10 * 1024 * 1024   # 10 MB base64 (~7.5 MB decoded)
+MAX_TEXT_SCAN_CHARS = 4000
+MAX_ANALYTICS_METADATA_BYTES = 4096
+ALLOWED_LANGUAGES = {'en', 'ar'}
+SCAN_RATE_LIMIT_PER_DAY = 50
+
+async def enforce_scan_rate_limit(user_id: str) -> None:
+    """Raise 429 if user has exceeded the daily scan quota."""
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    count = await db.scans.count_documents({
+        'user_id': user_id,
+        'created_at': {'$gte': since},
+    })
+    if count >= SCAN_RATE_LIMIT_PER_DAY:
+        raise HTTPException(status_code=429, detail='RATE_LIMIT_EXCEEDED')
+
 # Create indexes
 async def create_indexes():
     await db.users.create_index('email', unique=True)
@@ -485,6 +502,9 @@ async def logout(authorization: Optional[str] = Header(None)):
 async def update_language(language: str, authorization: Optional[str] = Header(None)):
     """Update user's preferred language"""
     user = await get_user_from_token(authorization)
+    # SEC hardening: whitelist supported languages
+    if language not in ALLOWED_LANGUAGES:
+        raise HTTPException(status_code=400, detail='INVALID_LANGUAGE')
     await db.users.update_one(
         {'user_id': user['user_id']},
         {'$set': {'language': language}}
@@ -501,27 +521,37 @@ class TextScanRequest(BaseModel):
 async def create_scan(request: ScanRequest, authorization: Optional[str] = Header(None)):
     """Upload and analyze product image"""
     user = await get_user_from_token(authorization)
-    
-    # Analyze image with AI
-    result = await analyze_product_with_ai(request.image_base64, user.get('language', 'en'))
-    
-    # Create scan document
+
+    # SEC-001: reject oversized payloads before decoding (DoS protection)
+    if len(request.image_base64) > MAX_IMAGE_BASE64_BYTES:
+        raise HTTPException(status_code=413, detail='PAYLOAD_TOO_LARGE')
+
+    # SEC-001: enforce per-user daily quota (cost protection)
+    await enforce_scan_rate_limit(user['user_id'])
+
+    # Validate and normalize image once (raises 400 with error code if bad)
+    validated_image = validate_image(request.image_base64)
+
+    # Analyze image with AI (analyzer will re-validate defensively; cheap on already-valid image)
+    result = await analyze_product_with_ai(validated_image, user.get('language', 'en'))
+
+    # Create scan document — store the validated/resized image, not the raw input
     scan_id = f"scan_{uuid.uuid4().hex[:12]}"
     scan_doc = {
         'scan_id': scan_id,
         'user_id': user['user_id'],
-        'image_base64': request.image_base64,
+        'image_base64': validated_image,
         'product_info': result['product_info'],
         'analysis': result['analysis'],
         'created_at': datetime.now(timezone.utc)
     }
     await db.scans.insert_one(scan_doc)
-    
+
     return ScanResponse(
         scan_id=scan_id,
         product_info=ProductInfo(**result['product_info']),
         analysis=Analysis(**result['analysis']),
-        image_base64=request.image_base64,
+        image_base64=validated_image,
         created_at=scan_doc['created_at']
     )
 
@@ -530,7 +560,17 @@ async def create_text_scan(request: TextScanRequest, authorization: Optional[str
     """Analyze product from text or URL"""
     user = await get_user_from_token(authorization)
 
-    result = await analyze_text_with_ai(request.text, user.get('language', 'en'))
+    # SEC-001: cap text length (cost + prompt-injection surface)
+    text = (request.text or '').strip()
+    if not text:
+        raise HTTPException(status_code=400, detail='EMPTY_TEXT')
+    if len(text) > MAX_TEXT_SCAN_CHARS:
+        raise HTTPException(status_code=413, detail='TEXT_TOO_LONG')
+
+    # SEC-001: enforce per-user daily quota (cost protection)
+    await enforce_scan_rate_limit(user['user_id'])
+
+    result = await analyze_text_with_ai(text, user.get('language', 'en'))
 
     # Use a placeholder image (1x1 transparent PNG) for text scans
     placeholder_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
@@ -543,7 +583,7 @@ async def create_text_scan(request: TextScanRequest, authorization: Optional[str
         'product_info': result['product_info'],
         'analysis': result['analysis'],
         'source': 'text',
-        'source_text': request.text[:500],  # Store first 500 chars
+        'source_text': text[:500],  # Store first 500 chars
         'created_at': datetime.now(timezone.utc)
     }
     await db.scans.insert_one(scan_doc)
